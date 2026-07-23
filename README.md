@@ -1,5 +1,5 @@
-# gtp5g - 5G compatible GTP kernel module
-gtp5g is a customized Linux kernel module gtp5g to handle packet by PFCP IEs such as PDR and FAR.
+# gtp5g-DPOP - 5G-DPOP compatible GTP kernel module
+gtp5g-DPOP is a customized Linux kernel module based on gtp5g. It handles packet forwarding by PFCP IEs such as PDR and FAR, and also exposes an eBPF hook (`gtp5g_trace_drop`) required by 5G-DPOP for packet drop observability.
 For detailed information, please reference to 3GPP specification TS 29.281 and TS 29.244.
 
 ## Notice
@@ -10,12 +10,13 @@ Please run this module with kernel version `5.0.0-23-generic`, upper than `5.4` 
 ### Clone
 #### The latest version
 ```
-git clone https://github.com/free5gc/gtp5g.git
+git clone https://github.com/solar224/gtp5g-DPOP.git
 ```
 #### The specific version
 ```
-# git clone -b {version} https://github.com/free5gc/gtp5g.git
-git clone -b v0.8.10 https://github.com/free5gc/gtp5g.git
+git clone https://github.com/solar224/gtp5g-DPOP.git
+cd gtp5g-DPOP
+git checkout 952fb41
 ```
 ### Install Required Packages
 ```
@@ -25,15 +26,38 @@ sudo apt -y install gcc g++ cmake autoconf libtool pkg-config libmnl-dev libyaml
 
 ### Compile
 ```
-cd gtp5g
+cd gtp5g-DPOP
 make clean && make
 ```
 
+### Setup for 5G-DPOP
+5G-DPOP's agent attaches kprobes to `gtp5g_trace_drop`, `gtp5g_encap_recv`, `gtp5g_dev_xmit`, `pdr_find_by_gtp1u`, and `pdr_find_by_ipv4`.
+
+Use the 5G-DPOP setup script to build/load this module with BTF support:
+```
+cd ~/gtp5g-DPOP
+make clean && make
+
+cd ~/5G-DPOP
+GTP5G_PATH=~/gtp5g-DPOP ./scripts/setup_env.sh --gtp5g-only
+```
+
+Use `--gtp5g-only --force` after source changes. Stop free5GC/UPF first because
+the force mode unloads and reloads the active kernel module.
+
+Verify the hookable symbols:
+```
+nm -n ~/gtp5g-DPOP/gtp5g.ko | grep -E 'gtp5g_trace_drop|gtp5g_encap_recv|gtp5g_dev_xmit|pdr_find_by_gtp1u|pdr_find_by_ipv4'
+sudo cat /proc/kallsyms | grep -E 'gtp5g_trace_drop|gtp5g_encap_recv|gtp5g_dev_xmit|pdr_find_by_gtp1u|pdr_find_by_ipv4'
+```
+
 ### Install kernel module
-Install the module to the system and load automatically at boot
+For standalone gtp5g usage, install the module to the system and load automatically at boot:
 ```
 sudo make install
 ```
+
+For 5G-DPOP, prefer the `Setup for 5G-DPOP` flow above so the eBPF hook and BTF preparation are checked before running the observability agent.
 
 ### Remove kernel module
 Remove the kernel module from the system

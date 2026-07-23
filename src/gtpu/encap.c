@@ -194,6 +194,7 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
     gtp_pkt = skb_push(skb, sizeof(struct gtpv1_echo_resp));
     if (!gtp_pkt) {
         GTP5G_ERR(gtp->dev, "can not construct GTP Echo Response\n");
+        gtp5g_trace_drop(GTP5G_DROP_ECHO_RESP_CREATE, skb);
         return PKT_DROPPED;
     }
     memset(gtp_pkt, 0, sizeof(struct gtpv1_echo_resp));
@@ -222,6 +223,7 @@ static int gtp1c_handle_echo_req(struct sk_buff *skb, struct gtp5g_dev *gtp)
     if (IS_ERR(rt)) {
         GTP5G_ERR(gtp->dev, "no route for GTP echo response from %pI4\n", 
         &iph->saddr);
+        gtp5g_trace_drop(GTP5G_DROP_NO_ROUTE, skb);
         return PKT_DROPPED;
     }
 
@@ -256,6 +258,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
 
     if (!pskb_may_pull(skb, pull_len)) {
         GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", pull_len);
+        gtp5g_trace_drop(GTP5G_DROP_PULL_FAILED, skb);
         rt = PKT_DROPPED;
         goto end;
     }
@@ -281,6 +284,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
     if (gtp_type != GTPV1_MSG_TYPE_TPDU && gtp_type != GTPV1_MSG_TYPE_EMARK) {
         GTP5G_ERR(gtp->dev, "GTP-U message type is not a TPDU or End Marker: %#x\n",
             gtp_type);
+        gtp5g_trace_drop(GTP5G_DROP_NOT_TPDU, skb);
         rt = PKT_TO_APP;
         goto end;
     }
@@ -299,6 +303,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
         pull_len = hdrlen;
         if (!pskb_may_pull(skb, pull_len)) {
             GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", pull_len);
+            gtp5g_trace_drop(GTP5G_DROP_PULL_HDR_FAIL, skb);
             rt = PKT_DROPPED;
             goto end;
         }
@@ -313,12 +318,14 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
             pull_len = hdrlen + 1; // 1 byte for the length of extension hdr
             if (!pskb_may_pull(skb, pull_len)) {
                 GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", pull_len);
+                gtp5g_trace_drop(GTP5G_DROP_PULL_HDR_FAIL, skb);
                 rt = PKT_DROPPED;
                 goto end;
             }
             extlen = (*((u8 *)(skb->data + hdrlen))) * 4; // total length of extension hdr
             if (extlen == 0) {
                 GTP5G_ERR(gtp->dev, "Invalid extention header length\n");
+                gtp5g_trace_drop(GTP5G_DROP_INVALID_EXT_HDR, skb);
                 rt = PKT_DROPPED;
                 goto end;
             }
@@ -326,6 +333,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
             pull_len = hdrlen;
             if (!pskb_may_pull(skb, pull_len)) {
                 GTP5G_ERR(gtp->dev, "Failed to pull skb length %#x\n", pull_len);
+                gtp5g_trace_drop(GTP5G_DROP_PULL_HDR_FAIL, skb);
                 rt = PKT_DROPPED;
                 goto end;
             }
@@ -349,6 +357,7 @@ static int gtp1u_udp_encap_recv(struct gtp5g_dev *gtp, struct sk_buff *skb)
     pdr = pdr_find_by_gtp1u(gtp, skb, hdrlen, teid, gtp_type);
     if (!pdr) {
         GTP5G_ERR(gtp->dev, "No PDR match this skb : teid[%x]\n", ntohl(teid));
+        gtp5g_trace_drop(GTP5G_DROP_NO_PDR, skb);
         rt = PKT_DROPPED;
         goto end;
     }
@@ -373,6 +382,7 @@ static int gtp5g_drop_skb_encap(struct sk_buff *skb, struct net_device *dev,
         pdr->ul_drop_cnt++;
         GTP5G_INF(NULL, "PDR (%u) UL_DROP_CNT (%llu)", pdr->id, pdr->ul_drop_cnt);
     }
+    gtp5g_trace_drop(GTP5G_DROP_PKT_DROPPED, skb);
     
     // release skb in outer function
     return PKT_DROPPED;
@@ -788,6 +798,7 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
 
     if (!far) {
         GTP5G_ERR(pdr->dev, "FAR not exists for PDR(%u)\n", pdr->id);
+        gtp5g_trace_drop(GTP5G_DROP_FAR_MISSING, skb);
         goto out;
     }
 
@@ -804,6 +815,7 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
         case FAR_ACTION_FORW:
             if (pdr->ul_dl_gate & QER_UL_GATE_CLOSE) {
                 GTP5G_TRC(pdr->dev, "QER UL gate is closed, drop the packet");
+                gtp5g_trace_drop(GTP5G_DROP_UL_GATE_CLOSED, skb);
                 return PKT_DROPPED;
             }
             rt = gtp5g_fwd_skb_encap(skb, pdr->dev, hdrlen, pdr, far);
@@ -814,6 +826,7 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
         default:
             GTP5G_ERR(pdr->dev, "Unhandled apply action(%u) in FAR(%u) and related to PDR(%u)\n",
                 far->action, far->id, pdr->id);
+            gtp5g_trace_drop(GTP5G_DROP_INVALID_FAR_ACTION, skb);
         }
         goto out;
     } 
@@ -821,6 +834,7 @@ static int gtp5g_rx(struct pdr *pdr, struct sk_buff *skb,
     // TODO: this action is not supported
     GTP5G_ERR(pdr->dev, "Uplink: PDR(%u) didn't has a OHR information "
         "(which routed to the gtp interface and matches a PDR)\n", pdr->id);
+    gtp5g_trace_drop(GTP5G_DROP_OHR_MISSING, skb);
 
 out:
     return rt;
@@ -845,6 +859,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
     
     if (!pdr) {
         GTP5G_ERR(dev, "PDR is NULL\n");
+        gtp5g_trace_drop(GTP5G_DROP_PDR_NULL, skb);
         return PKT_DROPPED;
     }
 
@@ -882,6 +897,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
             if (!pdr->pdi->f_teid) {
                 GTP5G_ERR(dev, "Failed to hdr removal + creation "
                     "due to pdr->pdi->f_teid not exist\n");
+                gtp5g_trace_drop(GTP5G_DROP_NO_F_TEID, skb);
                 return PKT_DROPPED;
             }
 
@@ -904,6 +920,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
                 if (ret < 0) {
                     if (ret == DONT_SEND_UL_PACKET) {
                         GTP5G_INF(pdr->dev, "Should not foward the first uplink packet");
+                        gtp5g_trace_drop(GTP5G_DROP_URR_REPORT_FAIL, skb);
                         return PKT_DROPPED;
                     } else {
                         GTP5G_ERR(pdr->dev, "Fail to send Usage Report");
@@ -913,10 +930,12 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
 
             if (color == Red) {
                 GTP5G_TRC(pdr->dev, "Drop red packet");
+                gtp5g_trace_drop(GTP5G_DROP_RED_PACKET, skb);
                 return PKT_DROPPED;
             }
             if (ip_xmit(skb, pdr->sk, dev) < 0) {
                 GTP5G_ERR(dev, "Failed to transmit skb through ip_xmit\n");
+                gtp5g_trace_drop(GTP5G_DROP_IP_XMIT_FAIL, skb);
                 return PKT_DROPPED;
             }
 
@@ -926,6 +945,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
 
     if (gtp1->type != GTPV1_MSG_TYPE_TPDU) {
         GTP5G_WAR(dev, "Uplink: GTPv1 msg type is not TPDU\n");
+        gtp5g_trace_drop(GTP5G_DROP_NOT_TPDU, skb);
         return PKT_DROPPED;
     }
 
@@ -936,6 +956,7 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
             !net_eq(sock_net(pdr->sk), 
             dev_net(dev)))) {
         GTP5G_ERR(dev, "Failed to pull GTP-U and UDP headers\n");
+        gtp5g_trace_drop(GTP5G_DROP_PULL_HDR_FAIL, skb);
         return PKT_DROPPED;
     }
 
@@ -969,11 +990,13 @@ static int gtp5g_fwd_skb_encap(struct sk_buff *skb, struct net_device *dev,
     
     if (color == Red) {
         GTP5G_TRC(pdr->dev, "Drop red packet");
+        gtp5g_trace_drop(GTP5G_DROP_RED_PACKET, skb);
         return PKT_DROPPED;
     }
     ret = netif_rx(skb);
     if (ret != NET_RX_SUCCESS) {
         GTP5G_ERR(dev, "Uplink: Packet got dropped\n");
+        gtp5g_trace_drop(GTP5G_DROP_NETIF_RX_FAIL, skb);
         return PKT_DROPPED_AND_FREED;
     }
 
@@ -985,6 +1008,7 @@ static int gtp5g_drop_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
 {
     ++pdr->dl_drop_cnt;
     GTP5G_INF(NULL, "PDR (%u) DL_DROP_CNT (%llu)", pdr->id, pdr->dl_drop_cnt);
+    gtp5g_trace_drop(GTP5G_DROP_PKT_DROPPED, skb);
     return PKT_DROPPED;
 }
 
@@ -1019,6 +1043,7 @@ static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
     
     if (!far) {
         GTP5G_ERR(dev, "Unknown RAN address\n");
+        gtp5g_trace_drop(GTP5G_DROP_FAR_MISSING, skb);
         goto err;
     }
 
@@ -1026,6 +1051,7 @@ static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
     if (!(fwd_param &&
         fwd_param->hdr_creation)) {
         GTP5G_ERR(dev, "Unknown RAN address\n");
+        gtp5g_trace_drop(GTP5G_DROP_OHC_MISSING, skb);
         goto err;
     }
 
@@ -1034,8 +1060,10 @@ static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
         pdr->sk,
         hdr_creation->peer_addr_ipv4.s_addr,
         pdr->role_addr_ipv4.s_addr);
-    if (IS_ERR(rt))
+    if (IS_ERR(rt)) {
+        gtp5g_trace_drop(GTP5G_DROP_NO_ROUTE, skb);
         goto err;
+    }
 
     if (is_uplink(pdr)) {
         pdu_type = PDU_SESSION_INFO_TYPE1;
@@ -1084,6 +1112,7 @@ static int gtp5g_fwd_skb_ipv4(struct sk_buff *skb,
     }
     if (color == Red) {
         GTP5G_TRC(pdr->dev, "Drop red packet");
+        gtp5g_trace_drop(GTP5G_DROP_RED_PACKET, skb);
         return PKT_DROPPED;
     }
     return PKT_FORWARDED;
@@ -1146,6 +1175,7 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
 
     if (!pdr) {
         GTP5G_INF(dev, "no PDR found for %pI4, skip\n", &iph->daddr);
+        gtp5g_trace_drop(GTP5G_DROP_NO_PDR, skb);
         return -ENOENT;
     }
 
@@ -1169,6 +1199,7 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
         case FAR_ACTION_FORW:
             if (pdr->ul_dl_gate & QER_DL_GATE_CLOSE) {
                 GTP5G_TRC(pdr->dev, "QER DL gate is closed, drop the packet");
+                gtp5g_trace_drop(GTP5G_DROP_DL_GATE_CLOSED, skb);
                 return PKT_DROPPED;
             }
             return gtp5g_fwd_skb_ipv4(skb, dev, pktinfo, pdr, far);
@@ -1177,8 +1208,11 @@ int gtp5g_handle_skb_ipv4(struct sk_buff *skb, struct net_device *dev,
         default:
             GTP5G_ERR(dev, "Unspec apply action(%u) in FAR(%u) and related to PDR(%u)",
                 far->action, far->id, pdr->id);
+            gtp5g_trace_drop(GTP5G_DROP_INVALID_FAR_ACTION, skb);
+            return -EINVAL;
         }
     }
 
+    gtp5g_trace_drop(GTP5G_DROP_FAR_MISSING, skb);
     return -ENOENT;
 }

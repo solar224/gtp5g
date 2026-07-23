@@ -107,6 +107,7 @@ static netdev_tx_t gtp5g_dev_xmit(struct sk_buff *skb, struct net_device *dev)
     u64 rxVol = skb->len;
 
     if (skb_cow_head(skb, dev->needed_headroom)) {
+        gtp5g_trace_drop(GTP5G_DROP_SKB_PREPARE_FAIL, skb);
         goto tx_err;
     }
 
@@ -121,6 +122,7 @@ static netdev_tx_t gtp5g_dev_xmit(struct sk_buff *skb, struct net_device *dev)
         update_usage_statistic(gtp, rxVol, skb->len, ret, SRC_INTF_CORE); // DL
         break;
     default:
+        gtp5g_trace_drop(GTP5G_DROP_UNSUPPORTED_L3, skb);
         ret = -EOPNOTSUPP;
     }
     rcu_read_unlock();

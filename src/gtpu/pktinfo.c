@@ -80,6 +80,7 @@ struct rtable *ip4_find_route(struct sk_buff *skb, struct iphdr *iph,
     rt = ip_route_output_key(dev_net(gtp_dev), fl4);
     if (IS_ERR(rt)) {
         GTP5G_ERR(gtp_dev, "no route to %pI4\n", &iph->daddr);
+        gtp5g_trace_drop(GTP5G_DROP_NO_ROUTE, skb);
         gtp_dev->stats.tx_carrier_errors++;
         goto err;
     }
@@ -220,6 +221,7 @@ void gtp5g_fwd_emark_skb_ipv4(struct sk_buff *skb,
         &fl4);
     if (IS_ERR(rt)) {
         GTP5G_ERR(dev, "Failed to send GTP-U end-marker due to routing\n");
+        gtp5g_trace_drop(GTP5G_DROP_NO_ROUTE, skb);
         dev_kfree_skb(skb);
         return;
     }
